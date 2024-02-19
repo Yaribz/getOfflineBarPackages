@@ -8,7 +8,8 @@ customized.
 
 Usage:
 
-    getOfflineBarPackages.pl [options]
+    getOfflineBarPackages.exe [options]
+    perl getOfflineBarPackages.pl [options]
     
       Options:
         -h,--help                : print usage
