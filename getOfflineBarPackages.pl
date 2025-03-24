@@ -7,7 +7,7 @@
 # and from official online packages. Versions of game components can be
 # customized.
 #
-# Copyright (C) 2024  Yann Riou <yaribzh@gmail.com>
+# Copyright (C) 2025  Yann Riou <yaribzh@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published by
@@ -59,7 +59,7 @@ use constant {
   BAR_MAPS_INVENTORY_URL => 'https://maps-metadata.beyondallreason.dev/latest/live_maps.validated.json',
 };
 
-my $VERSION='0.10';
+my $VERSION='0.11';
 my $BAR_DOWNLOAD_BASE_URL='https://github.com/beyond-all-reason/BYAR-Chobby/releases/download/';
 my @BAR_LAUNCHER_CFG_SORT_ORDER=qw'
   title
@@ -92,7 +92,19 @@ my @BAR_LAUNCHER_CFG_SORT_ORDER=qw'
       engine
       springsettings
   links
+  json_files
+    server
+    game
   default_springsettings
+  discord_rich_presence
+    application_id
+    minimap_url
+    large_image_key_default
+    large_image_text_default
+    small_image_key_default
+    small_image_text_default
+    button_label
+    button_url
     ';
 my %BAR_LAUNCHER_CFG_FIELD_IDX;
 map {$BAR_LAUNCHER_CFG_FIELD_IDX{$BAR_LAUNCHER_CFG_SORT_ORDER[$_]}=$_} (0..$#BAR_LAUNCHER_CFG_SORT_ORDER);
@@ -857,7 +869,7 @@ if($tasks{engine}) {
     fatalError("No engine found in local engine directory \"$localEngineDir\"")
         unless(@localEngineSubdirs);
     if($opt{engine}) {
-      $engineSubdir = first {$opt{engine} eq $_ || $opt{engine}.' bar' eq $_} @localEngineSubdirs;
+      $engineSubdir = first {$opt{engine} eq $_ || 'recoil_'.$opt{engine} eq $_ || $opt{engine}.' bar' eq $_} @localEngineSubdirs;
       $engineSubdir //= first {index($_,$opt{engine}) > -1} @localEngineSubdirs;
       fatalError("Cannot find matching local engine for version \"$opt{engine}\"")
           unless(defined $engineSubdir);
@@ -866,7 +878,7 @@ if($tasks{engine}) {
       fatalError("Engine subdirectory \"$engineSubdir\" specified in local Beyond All Reason launcher configuration was not found in local engine data directory \"$localEngineDir\"")
           unless(any {$engineSubdir eq $_} @localEngineSubdirs);
     }
-    my $engineVersion = $engineSubdir =~ /(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)(?: bar)?$/ ? $1 : '?';
+    my $engineVersion = $engineSubdir =~ /(?<![a-zA-Z0-9])(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)(?: bar)?$/ ? $1 : '?';
     my $sourceEngineDir=catdir($localEngineDir,$engineSubdir);
     foreach my $os (qw'linux windows') {
       next if(($os eq 'windows' && $opt{linux}) || ($os eq 'linux' && $opt{windows}));
@@ -894,7 +906,7 @@ if($tasks{engine}) {
       $engineTag //= first {index($_,$opt{engine}) > -1} @{$r_tagsData->{refs}};
       fatalError("Cannot find matching engine release for version \"$opt{engine}\"")
           unless(defined $engineTag);
-      my $expandedAssetContent=httpGet('https://github.com/'.BAR_GITHUB_REPOSITORY.'/releases/expanded_assets/'.$engineTag,
+      my $expandedAssetContent=httpGet('https://github.com/'.BAR_GITHUB_REPOSITORY.'/releases/expanded_assets/'.HTTP::Tiny->_uri_escape($engineTag),
                                        "GitHub release info for release \"$engineTag\" on Beyond All Reason repository");
       my %assetFilters = (
         'windows-64' => 'windows',
@@ -903,21 +915,25 @@ if($tasks{engine}) {
       foreach my $assetFilter (sort keys %assetFilters) {
         my $os=$assetFilters{$assetFilter};
         fatalError('Cannot find appropriate asset for '.ucfirst($os)." in GitHub release info for release \"$engineTag\" of Beyond All Reason repository")
-            unless($expandedAssetContent =~ /href="([^"]+\/[^"\/]*?(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)\/[^"\/]+\Q_$assetFilter-minimal-portable.7z\E)"/);
+            unless($expandedAssetContent =~ /href="([^"]+\/[^"\/]*?(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)\/[^"\/]+(?:\Q_amd64-$os.7z\E|\Q_$assetFilter-minimal-portable.7z\E))"/);
         my ($engineDlUrl,$engineVersionOs)=($1,$2);
         if(defined $engineVersion) {
           fatalError("Inconsistency between Linux and Windows engine versions in GitHub release info for release \"$engineTag\" of Beyond All Reason repository (\"$engineVersion\" , \"$engineVersionOs\")")
               if($engineVersion ne $engineVersionOs);
         }else{
           $engineVersion=$engineVersionOs;
-          $engineSubdir=$engineVersion.' bar';
+          if(substr($engineVersion,0,4) eq '105.') {
+            $engineSubdir=$engineVersion.' bar';
+          }else{
+            $engineSubdir='recoil_'.$engineVersion;
+          }
         }
         $engineDlUrl='https://github.com'.$engineDlUrl if(substr($engineDlUrl,0,1) eq '/');
         $engineDlUrls{$os}=$engineDlUrl;
       }
     }else{
       retrieveEngineInfoFromBarLauncherConfig();
-      $engineVersion = $engineSubdir =~ /(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)(?: bar)?$/ ? $1 : '?';
+      $engineVersion = $engineSubdir =~ /(?<![a-zA-Z0-9])(\d+(?:\.\d+){1,3}(?:-\d+-g[0-9a-f]+)?)(?: bar)?$/ ? $1 : '?';
     }
     foreach my $os (sort keys %engineDlUrls) {
       next if(($os eq 'windows' && $opt{linux}) || ($os eq 'linux' && $opt{windows}));
@@ -937,7 +953,13 @@ if($tasks{engine}) {
 }else{
   if($opt{engine}) {
     $engineSubdir=$opt{engine};
-    $engineSubdir.=' bar' unless(substr($engineSubdir,-4) eq ' bar');
+    if(substr($engineSubdir,0,7) ne 'recoil_' && substr($engineSubdir,-4) ne ' bar') {
+      if(substr($engineSubdir,0,4) eq '105.') {
+        $engineSubdir.=' bar';
+      }else{
+        substr($engineSubdir,0,0,'recoil_');
+      }
+    }
   }
   print "> Disabled\n";
 }
@@ -1190,6 +1212,7 @@ if($tasks{launcher}) {
       or fatalError("Failed to create file \"$devmodeTxtFile\" ($!)");
   close($devmodeTxtFh);
   foreach my $os (qw'windows linux') {
+    next if(($os eq 'windows' && $opt{linux}) || ($os eq 'linux' && $opt{windows}));
     my $osLauncherCfgFile=catfile($outDir,'data-'.$os,'launcher_cfg.json');
     open(my $osLauncherCfgFh,'>',$osLauncherCfgFile)
         or fatalError("Failed to open file \"$osLauncherCfgFile\" for writing ($!)");
